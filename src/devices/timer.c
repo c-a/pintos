@@ -29,6 +29,17 @@ static bool too_many_loops (unsigned loops);
 static void busy_wait (int64_t loops);
 static void real_time_sleep (int64_t num, int32_t denom);
 
+
+struct sleeper
+{
+	struct list_elem elem;
+	int64_t          end_tick;
+  struct semaphore sema;
+};
+
+static struct list sleepers;
+static struct lock sleepers_lock;
+
 /* Sets up the 8254 Programmable Interval Timer (PIT) to
    interrupt PIT_FREQ times per second, and registers the
    corresponding interrupt. */
@@ -44,6 +55,9 @@ timer_init (void)
   outb (0x40, count >> 8);
 
   intr_register_ext (0x20, timer_interrupt, "8254 Timer");
+
+  list_init (&sleepers);
+  lock_init (&sleepers_lock);
 }
 
 /* Calibrates loops_per_tick, used to implement brief delays. */
@@ -92,15 +106,37 @@ timer_elapsed (int64_t then)
   return timer_ticks () - then;
 }
 
+static bool
+sleepers_less_func (const struct list_elem *a,
+                    const struct list_elem *b)
+{
+  struct sleeper *sa = list_entry (a, struct sleeper, elem);
+  struct sleeper *sb = list_entry (b, struct sleeper, elem);
+
+	return sa->end_tick < sb->end_tick ? true : false;
+}
+
 /* Suspends execution for approximately TICKS timer ticks. */
 void
 timer_sleep (int64_t ticks) 
 {
-  int64_t start = timer_ticks ();
+  struct sleeper s;
 
   ASSERT (intr_get_level () == INTR_ON);
-  while (timer_elapsed (start) < ticks) 
-    thread_yield ();
+
+  s.end_tick = timer_ticks () + ticks;
+  sema_init (&s.sema, 0);
+
+  enum intr_level old_level = intr_disable ();
+	lock_acquire (&sleepers_lock);
+
+	list_insert_ordered (&sleepers, &s.elem, (list_less_func *)sleepers_less_func,
+                       NULL);
+
+  lock_release (&sleepers_lock);
+  intr_set_level (old_level);
+
+  sema_down (&s.sema);
 }
 
 /* Suspends execution for approximately MS milliseconds. */
@@ -137,6 +173,22 @@ timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
   thread_tick ();
+
+  struct list_elem *e;
+
+  for (e = list_begin (&sleepers); e != list_end (&sleepers);
+       e = list_next (e))
+  {
+    struct sleeper *s = list_entry (e, struct sleeper, elem);
+
+    if (ticks >= s->end_tick)
+    {
+      list_remove (e);
+      sema_up (&s->sema);
+    }
+    else
+      break;
+  }
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer
