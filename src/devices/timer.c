@@ -176,14 +176,13 @@ timer_interrupt (struct intr_frame *args UNUSED)
 
   struct list_elem *e;
 
-  for (e = list_begin (&sleepers); e != list_end (&sleepers);
-       e = list_next (e))
+  for (e = list_begin (&sleepers); e != list_end (&sleepers);)
   {
     struct sleeper *s = list_entry (e, struct sleeper, elem);
 
     if (ticks >= s->end_tick)
     {
-      list_remove (e);
+      e = list_remove (e);
       sema_up (&s->sema);
     }
     else
