@@ -32,9 +32,9 @@ static void real_time_sleep (int64_t num, int32_t denom);
 
 struct sleeper
 {
-	struct list_elem elem;
-	int64_t          end_tick;
-  struct semaphore sema;
+    struct list_elem elem;
+    int64_t          end_tick;
+    struct semaphore sema;
 };
 
 static struct list sleepers;
@@ -128,9 +128,9 @@ timer_sleep (int64_t ticks)
   sema_init (&s.sema, 0);
 
   enum intr_level old_level = intr_disable ();
-	lock_acquire (&sleepers_lock);
+  lock_acquire (&sleepers_lock);
 
-	list_insert_ordered (&sleepers, &s.elem, (list_less_func *)sleepers_less_func,
+  list_insert_ordered (&sleepers, &s.elem, (list_less_func *)sleepers_less_func,
                        NULL);
 
   lock_release (&sleepers_lock);
