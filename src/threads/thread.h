@@ -5,6 +5,13 @@
 #include <list.h>
 #include <stdint.h>
 
+#ifdef USERPROG
+#define MAX_FILES 128
+
+#include "lib/kernel/bitmap.h"
+#include "filesys/file.h"
+#endif
+
 /* States in a thread's life cycle. */
 enum thread_status
   {
@@ -95,6 +102,9 @@ struct thread
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
+    
+    struct bitmap *files_bitmap;
+    struct file   *files[MAX_FILES];
 #endif
 
     /* Owned by thread.c. */

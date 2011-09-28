@@ -114,6 +114,16 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
+
+  if (cur->files_bitmap != NULL)
+    {
+      unsigned id = 0;
+
+      while ((id = bitmap_scan_and_flip (cur->files_bitmap, id, 1, 0)) != BITMAP_ERROR)
+	file_close (cur->files[id]);
+
+      bitmap_destroy (cur->files_bitmap);
+    }
 }
 
 /* Sets up the CPU for running user code in the current
@@ -225,6 +235,11 @@ load (const char *file_name, void (**eip) (void), void **esp)
   if (!setup_stack (esp)){
     goto done;
   }
+
+  /* Initialize file bitmap */
+  t->files_bitmap = bitmap_create (MAX_FILES);
+  if (t->files_bitmap == NULL)
+    goto done;
 
    /* Uncomment the following line to print some debug
      information. This will be useful when you debug the program
@@ -476,7 +491,7 @@ setup_stack (void **esp)
     {
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
       if (success)
-        *esp = PHYS_BASE;
+        *esp = PHYS_BASE - 12;
       else
         palloc_free_page (kpage);
     }
