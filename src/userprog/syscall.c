@@ -33,17 +33,13 @@ syscall_exit (struct intr_frame *f)
 {
   int32_t *esp;
   int exit_code;
-  struct thread *cur;
-  struct child_status *cs;
   
   esp = f->esp;
   esp++;
 
   exit_code = (int)f->esp;
 
-  cur = thread_current ();
-  cs = cur->child_status;
-  cs->exit_code = exit_code;
+  process_set_exit_code (exit_code);
 
   thread_exit ();
 }
@@ -78,7 +74,7 @@ syscall_wait (struct intr_frame *f)
 
   tid = (tid_t)f->esp;
 
-  
+  f->eax = process_wait (tid);
 }
 
 static void
@@ -250,10 +246,10 @@ syscall_handler (struct intr_frame *f)
       syscall_halt ();
       break;
     case SYS_EXIT:
-      syscall_exit ();
+      syscall_exit (f);
       break;
     case SYS_WAIT:
-      syscall_wait ();
+      syscall_wait (f);
       break;
     case SYS_EXEC:
       syscall_exec (f);

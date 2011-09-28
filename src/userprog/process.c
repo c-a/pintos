@@ -18,42 +18,79 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "threads/synch.h"
+#include "threads/malloc.h"
+#include "lib/kernel/hash.h"
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 
 struct start_process_data
 {
-    const char       *file_name;
-    struct semaphore  sema;
-    bool              success;
+    const char          *file_name;
+    struct semaphore     sema;
+    struct child_status *cs;
 };
 
 struct child_status
 {
-  int              exit_code;
+  struct hash_elem hash_elem;
+
+  tid_t tid;
+  int exit_code;
   struct semaphore sema;
 
-  struct lock      ref_cnt_lock;
-  int              ref_cnt;
+  struct lock ref_cnt_lock;
+  int ref_cnt;
 };
 
 static struct child_status *
-child_status_new (void)
+child_status_new (tid_t tid)
 {
-  child_status *cs = malloc (sizeof (struct child_status));
+  struct child_status *cs = malloc (sizeof (struct child_status));
 
+  cs->tid = tid;
+  cs->exit_code = -1;
   sema_init (&cs->sema, 0);
+
   lock_init (&cs->ref_cnt_lock);
   cs->ref_cnt = 2;
+
+  return cs;
 }
 
 static void
 child_status_unref (struct child_status *cs)
 {
-  lock_aquire (&cs->ref_cnt_lock);
+  lock_acquire (&cs->ref_cnt_lock);
   if (--cs->ref_cnt == 0)
       free (cs);
+  lock_release (&cs->ref_cnt_lock);
+}
+
+static unsigned
+child_status_hash_func (const struct hash_elem *e, void *aux UNUSED)
+{
+  struct child_status *cs = hash_entry (e, struct child_status, hash_elem);
+
+  return hash_int (cs->tid);
+}
+
+static bool
+child_status_less_func (const struct hash_elem *a, const struct hash_elem *b, void *aux UNUSED)
+{
+  struct child_status *csa = hash_entry (a, struct child_status, hash_elem);
+  struct child_status *csb = hash_entry (b, struct child_status, hash_elem);
+
+  return csa->tid < csb->tid;
+}
+
+void
+process_set_exit_code (int exit_code)
+{
+  struct thread *cur = thread_current;
+  struct child_status *cs = cur->child_status;
+
+  cs->exit_code = exit_code;
 }
 
 /* Starts a new thread running a user program loaded from
@@ -65,6 +102,7 @@ process_execute (const char *file_name)
 {
   struct start_process_data data;
   tid_t tid;
+  struct thread *cur;
 
   data.file_name = file_name;
   sema_init (&data.sema, 0);
@@ -77,10 +115,13 @@ process_execute (const char *file_name)
   /* Wait for load to finish */
   sema_down (&data.sema);
 
-  if (data.success)
-    return tid;
-  else
+  if (data.cs == NULL)
     return TID_ERROR;
+
+  cur = thread_current ();
+  hash_insert (&cur->children_hash, &data.cs->hash_elem);
+
+  return tid;
 }
 
 /* A thread function that loads a user process and starts it
@@ -89,6 +130,7 @@ static void
 start_process (void *data_)
 {
   struct start_process_data *data = data_;
+  struct thread *cur = thread_current ();
   struct intr_frame if_;
   bool success;
 
@@ -100,7 +142,7 @@ start_process (void *data_)
   success = load (data->file_name, &if_.eip, &if_.esp);
 
   /* Notify starting process about success */
-  data->success = success;
+  data->cs = success ? cur->child_status : NULL;
   sema_up (&data->sema);
 
   /* If load failed, quit. */
@@ -129,6 +171,26 @@ start_process (void *data_)
 int
 process_wait (tid_t child_tid) 
 {
+  struct thread *cur = thread_current ();
+  struct child_status find_cs;
+  struct hash_elem *e;
+
+  find_cs.tid = child_tid;
+  e = hash_find (&cur->children_hash, &find_cs.hash_elem);
+  if (e)
+    {
+      struct child_status *cs = hash_entry (e, struct child_status, hash_elem);
+      int exit_code;
+
+      sema_down (&cs->sema);
+      exit_code = cs->exit_code;
+
+      hash_delete (&cur->children_hash, e);
+      child_status_unref (cs);
+
+      return exit_code;
+    }
+      
   return -1;
 }
 
@@ -173,6 +235,9 @@ process_exit (void)
       sema_up (&cs->sema);
       child_status_unref (cs);
     }
+
+  if (cur->hash_initialized)
+     hash_destroy (&cur->children_hash, (hash_action_func *)child_status_unref);
 }
 
 /* Sets up the CPU for running user code in the current
@@ -289,6 +354,20 @@ load (const char *file_name, void (**eip) (void), void **esp)
   t->files_bitmap = bitmap_create (MAX_FILES);
   if (t->files_bitmap == NULL)
     goto done;
+
+  /* Initialize child_status */
+  t->child_status = child_status_new (t->tid);
+  if (t->child_status == NULL)
+    goto done;
+
+  /* Initalize children_hash */
+  if (hash_init (&t->children_hash, child_status_hash_func, child_status_less_func, NULL))
+      t->hash_initialized = true;
+  else
+    {
+      t->hash_initialized = false;
+      goto done;
+    }
 
    /* Uncomment the following line to print some debug
      information. This will be useful when you debug the program
