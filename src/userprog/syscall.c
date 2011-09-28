@@ -29,9 +29,56 @@ syscall_halt (void)
 }
 
 static void
-syscall_exit (void)
+syscall_exit (struct intr_frame *f)
 {
+  int32_t *esp;
+  int exit_code;
+  struct thread *cur;
+  struct child_status *cs;
+  
+  esp = f->esp;
+  esp++;
+
+  exit_code = (int)f->esp;
+
+  cur = thread_current ();
+  cs = cur->child_status;
+  cs->exit_code = exit_code;
+
   thread_exit ();
+}
+
+static void
+syscall_exec (struct intr_frame *f)
+{
+  int32_t *esp;
+  char *cmd_line;
+  tid_t tid;
+
+  esp = f->esp;
+  esp++;
+
+  cmd_line = (char *)*esp;
+
+  tid = process_execute (cmd_line);
+  if (tid == TID_ERROR)
+    f->eax = -1;
+  else
+    f->eax = tid;
+}
+
+static void
+syscall_wait (struct intr_frame *f)
+{
+  int32_t *esp;
+  tid_t tid;
+
+  esp = f->esp;
+  esp++;
+
+  tid = (tid_t)f->esp;
+
+  
 }
 
 static void
@@ -198,12 +245,18 @@ syscall_handler (struct intr_frame *f)
   syscall_nr = *esp++;
 
   switch (syscall_nr)
-    {
+  {
     case SYS_HALT:
       syscall_halt ();
       break;
     case SYS_EXIT:
       syscall_exit ();
+      break;
+    case SYS_WAIT:
+      syscall_wait ();
+      break;
+    case SYS_EXEC:
+      syscall_exec (f);
       break;
     case SYS_CREATE:
       syscall_create (f);

@@ -17,9 +17,44 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "threads/synch.h"
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
+
+struct start_process_data
+{
+    const char       *file_name;
+    struct semaphore  sema;
+    bool              success;
+};
+
+struct child_status
+{
+  int              exit_code;
+  struct semaphore sema;
+
+  struct lock      ref_cnt_lock;
+  int              ref_cnt;
+};
+
+static struct child_status *
+child_status_new (void)
+{
+  child_status *cs = malloc (sizeof (struct child_status));
+
+  sema_init (&cs->sema, 0);
+  lock_init (&cs->ref_cnt_lock);
+  cs->ref_cnt = 2;
+}
+
+static void
+child_status_unref (struct child_status *cs)
+{
+  lock_aquire (&cs->ref_cnt_lock);
+  if (--cs->ref_cnt == 0)
+      free (cs);
+}
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -28,29 +63,32 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
 tid_t
 process_execute (const char *file_name) 
 {
-  char *fn_copy;
+  struct start_process_data data;
   tid_t tid;
 
-  /* Make a copy of FILE_NAME.
-     Otherwise there's a race between the caller and load(). */
-  fn_copy = palloc_get_page (0);
-  if (fn_copy == NULL)
-    return TID_ERROR;
-  strlcpy (fn_copy, file_name, PGSIZE);
+  data.file_name = file_name;
+  sema_init (&data.sema, 0);
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create (file_name, PRI_DEFAULT, start_process, &data);
   if (tid == TID_ERROR)
-    palloc_free_page (fn_copy); 
-  return tid;
+    return tid;
+
+  /* Wait for load to finish */
+  sema_down (&data.sema);
+
+  if (data.success)
+    return tid;
+  else
+    return TID_ERROR;
 }
 
 /* A thread function that loads a user process and starts it
    running. */
 static void
-start_process (void *file_name_)
+start_process (void *data_)
 {
-  char *file_name = file_name_;
+  struct start_process_data *data = data_;
   struct intr_frame if_;
   bool success;
 
@@ -59,10 +97,13 @@ start_process (void *file_name_)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (file_name, &if_.eip, &if_.esp);
+  success = load (data->file_name, &if_.eip, &if_.esp);
+
+  /* Notify starting process about success */
+  data->success = success;
+  sema_up (&data->sema);
 
   /* If load failed, quit. */
-  palloc_free_page (file_name);
   if (!success) 
     thread_exit ();
 
@@ -86,7 +127,7 @@ start_process (void *file_name_)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait (tid_t child_tid UNUSED) 
+process_wait (tid_t child_tid) 
 {
   return -1;
 }
@@ -97,6 +138,7 @@ process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
+  struct child_status *cs;
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -123,6 +165,13 @@ process_exit (void)
 	file_close (cur->files[id]);
 
       bitmap_destroy (cur->files_bitmap);
+    }
+
+  cs = cur->child_status;
+  if (cs != NULL)
+    {
+      sema_up (&cs->sema);
+      child_status_unref (cs);
     }
 }
 

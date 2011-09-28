@@ -9,6 +9,7 @@
 #define MAX_FILES 128
 
 #include "lib/kernel/bitmap.h"
+#include "lib/kernel/list.h"
 #include "filesys/file.h"
 #endif
 
@@ -105,6 +106,9 @@ struct thread
     
     struct bitmap *files_bitmap;
     struct file   *files[MAX_FILES];
+
+    void          *child_status;
+    struct list    children_list;
 #endif
 
     /* Owned by thread.c. */
