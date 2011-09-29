@@ -22,13 +22,15 @@
 #include "lib/kernel/hash.h"
 
 static thread_func start_process NO_RETURN;
-static bool load (const char *cmdline, void (**eip) (void), void **esp);
+static bool load (const char *file_name, const char **args, int argc, void (**eip) (void), void **esp);
 
 struct start_process_data
 {
-    const char          *file_name;
-    struct semaphore     sema;
-    struct child_status *cs;
+  const char          *file_name;
+  const char          *args[32];
+  int                  argc;
+  struct semaphore     sema;
+  struct child_status *cs;
 };
 
 struct child_status
@@ -61,13 +63,18 @@ child_status_new (tid_t tid)
 static void
 child_status_unref (struct child_status *cs)
 {
+  bool free_cs = false;
+
   lock_acquire (&cs->ref_cnt_lock);
   if (--cs->ref_cnt == 0)
-      free (cs);
+    free_cs = true;
   lock_release (&cs->ref_cnt_lock);
+
+  if (free_cs)
+    free (cs);
 }
 
-static unsigned
+unsigned
 child_status_hash_func (const struct hash_elem *e, void *aux UNUSED)
 {
   struct child_status *cs = hash_entry (e, struct child_status, hash_elem);
@@ -75,7 +82,7 @@ child_status_hash_func (const struct hash_elem *e, void *aux UNUSED)
   return hash_int (cs->tid);
 }
 
-static bool
+bool
 child_status_less_func (const struct hash_elem *a, const struct hash_elem *b, void *aux UNUSED)
 {
   struct child_status *csa = hash_entry (a, struct child_status, hash_elem);
@@ -87,7 +94,7 @@ child_status_less_func (const struct hash_elem *a, const struct hash_elem *b, vo
 void
 process_set_exit_code (int exit_code)
 {
-  struct thread *cur = thread_current;
+  struct thread *cur = thread_current();
   struct child_status *cs = cur->child_status;
 
   cs->exit_code = exit_code;
@@ -100,11 +107,30 @@ process_set_exit_code (int exit_code)
 tid_t
 process_execute (const char *file_name) 
 {
+  char *fn_copy, *token, *save_ptr;
+  int i;
   struct start_process_data data;
+
   tid_t tid;
   struct thread *cur;
 
-  data.file_name = file_name;
+  /* Make a copy of FILE_NAME. */
+  /* Otherwise there's a race between the caller and load(). */
+  fn_copy = palloc_get_page (0);
+  if (fn_copy == NULL)
+    return TID_ERROR;
+  strlcpy (fn_copy, file_name, PGSIZE);
+
+  data.file_name = token = strtok_r (fn_copy, " ", &save_ptr);
+  /* Split into parts */
+    for (i = 0;
+         i < 32 && token != NULL;
+         i++, token = strtok_r (NULL, " ", &save_ptr))
+  {
+    data.args[i] = token;
+  }
+  data.argc = i;
+
   sema_init (&data.sema, 0);
 
   /* Create a new thread to execute FILE_NAME. */
@@ -114,6 +140,8 @@ process_execute (const char *file_name)
 
   /* Wait for load to finish */
   sema_down (&data.sema);
+
+  palloc_free_page (fn_copy);
 
   if (data.cs == NULL)
     return TID_ERROR;
@@ -139,7 +167,7 @@ start_process (void *data_)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (data->file_name, &if_.eip, &if_.esp);
+  success = load (data->file_name, data->args, data->argc, &if_.eip, &if_.esp);
 
   /* Notify starting process about success */
   data->cs = success ? cur->child_status : NULL;
@@ -232,6 +260,8 @@ process_exit (void)
   cs = cur->child_status;
   if (cs != NULL)
     {
+      printf("%s: exit(%d)\n", cur->name, cs->exit_code);
+
       sema_up (&cs->sema);
       child_status_unref (cs);
     }
@@ -320,6 +350,7 @@ struct Elf32_Phdr
 #define PF_R 4          /* Readable. */
 
 static bool setup_stack (void **esp);
+static void init_stack (void **esp, const char **args, int argc);
 static bool validate_segment (const struct Elf32_Phdr *, struct file *);
 static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
                           uint32_t read_bytes, uint32_t zero_bytes,
@@ -330,7 +361,7 @@ static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
    and its initial stack pointer into *ESP.
    Returns true if successful, false otherwise. */
 bool
-load (const char *file_name, void (**eip) (void), void **esp) 
+load (const char *file_name, const char **args, int argc, void (**eip) (void), void **esp) 
 {
   struct thread *t = thread_current ();
   struct Elf32_Ehdr ehdr;
@@ -345,11 +376,6 @@ load (const char *file_name, void (**eip) (void), void **esp)
     goto done;
   process_activate ();
 
-  /* Set up stack. */
-  if (!setup_stack (esp)){
-    goto done;
-  }
-
   /* Initialize file bitmap */
   t->files_bitmap = bitmap_create (MAX_FILES);
   if (t->files_bitmap == NULL)
@@ -360,14 +386,19 @@ load (const char *file_name, void (**eip) (void), void **esp)
   if (t->child_status == NULL)
     goto done;
 
-  /* Initalize children_hash */
+  /* Initial children_hash */
   if (hash_init (&t->children_hash, child_status_hash_func, child_status_less_func, NULL))
-      t->hash_initialized = true;
+    t->hash_initialized = true;
   else
-    {
-      t->hash_initialized = false;
-      goto done;
-    }
+    goto done;
+
+  /* Set up stack. */
+  if (!setup_stack (esp)){
+    goto done;
+  }
+
+  /* Init stack with arguments */
+  init_stack (esp, args, argc);
 
    /* Uncomment the following line to print some debug
      information. This will be useful when you debug the program
@@ -619,11 +650,55 @@ setup_stack (void **esp)
     {
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
       if (success)
-        *esp = PHYS_BASE - 12;
+        *esp = PHYS_BASE;
       else
         palloc_free_page (kpage);
     }
   return success;
+}
+
+static void
+init_stack (void **esp, const char **args, int argc)
+{
+  char *cesp;
+  int32_t *pesp;
+  int i;
+  int32_t args_address[32];
+
+  cesp = *esp;
+  /* put arguments on stack */
+  for (i = 0; i < argc; i++)
+  {
+    size_t len = strlen (args[i]) + 1;
+    
+    cesp -= len;
+    memcpy (cesp, args[i], len);
+    args_address[i] = (int32_t)cesp;
+  }
+
+  /* word align */
+  cesp = cesp - ((int32_t)cesp % 4);
+
+  pesp = (int32_t *)cesp;
+  pesp--;
+  /* Null terminate */
+  *pesp = 0;
+  /* argv[0..*] */
+  for (i--, pesp--; i >= 0; i--, pesp--)
+    *pesp = args_address[i];
+
+  /* argv */
+  *pesp = (int32_t)pesp + 1;
+  pesp--;
+  
+  /* argc */
+  *pesp = argc;
+  pesp--;
+
+  /* return address */
+  *pesp = 0;
+
+  *esp = pesp;
 }
 
 /* Adds a mapping from user virtual address UPAGE to kernel

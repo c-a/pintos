@@ -10,4 +10,7 @@ int process_wait (tid_t);
 void process_exit (void);
 void process_activate (void);
 
+unsigned child_status_hash_func (const struct hash_elem *e, void *aux);
+bool child_status_less_func (const struct hash_elem *a, const struct hash_elem *b, void *aux);
+
 #endif /* userprog/process.h */

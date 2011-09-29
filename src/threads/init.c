@@ -92,6 +92,9 @@ main (void)
 #ifdef USERPROG
   tss_init ();
   gdt_init ();
+
+  hash_init (&(thread_current())->children_hash, child_status_hash_func,
+             child_status_less_func, NULL);
 #endif
 
   /* Initialize interrupt handlers. */
