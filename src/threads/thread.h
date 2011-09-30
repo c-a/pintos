@@ -137,7 +137,7 @@ struct thread *thread_current (void);
 tid_t thread_tid (void);
 const char *thread_name (void);
 
-void thread_exit (void) NO_RETURN;
+void thread_exit (int exit_code) NO_RETURN;
 void thread_yield (void);
 
 int thread_get_priority (void);

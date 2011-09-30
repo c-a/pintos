@@ -51,7 +51,6 @@ child_status_new (tid_t tid)
   struct child_status *cs = malloc (sizeof (struct child_status));
 
   cs->tid = tid;
-  cs->exit_code = -1;
   sema_init (&cs->sema, 0);
 
   lock_init (&cs->ref_cnt_lock);
@@ -91,15 +90,6 @@ child_status_less_func (const struct hash_elem *a, const struct hash_elem *b, vo
   return csa->tid < csb->tid;
 }
 
-void
-process_set_exit_code (int exit_code)
-{
-  struct thread *cur = thread_current();
-  struct child_status *cs = cur->child_status;
-
-  cs->exit_code = exit_code;
-}
-
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
@@ -134,7 +124,7 @@ process_execute (const char *file_name)
   sema_init (&data.sema, 0);
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, &data);
+  tid = thread_create (data.file_name, PRI_DEFAULT, start_process, &data);
   if (tid == TID_ERROR)
     return tid;
 
@@ -175,7 +165,7 @@ start_process (void *data_)
 
   /* If load failed, quit. */
   if (!success) 
-    thread_exit ();
+    thread_exit (-1);
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -224,7 +214,7 @@ process_wait (tid_t child_tid)
 
 /* Free the current process's resources. */
 void
-process_exit (void)
+process_exit (int exit_code)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
@@ -251,7 +241,7 @@ process_exit (void)
     {
       unsigned id = 0;
 
-      while ((id = bitmap_scan_and_flip (cur->files_bitmap, id, 1, 0)) != BITMAP_ERROR)
+      while ((id = bitmap_scan_and_flip (cur->files_bitmap, id, 1, 1)) != BITMAP_ERROR)
 	file_close (cur->files[id]);
 
       bitmap_destroy (cur->files_bitmap);
@@ -260,6 +250,7 @@ process_exit (void)
   cs = cur->child_status;
   if (cs != NULL)
     {
+      cs->exit_code = exit_code;
       printf("%s: exit(%d)\n", cur->name, cs->exit_code);
 
       sema_up (&cs->sema);
@@ -403,7 +394,7 @@ load (const char *file_name, const char **args, int argc, void (**eip) (void), v
    /* Uncomment the following line to print some debug
      information. This will be useful when you debug the program
      stack.*/
-/*#define STACK_DEBUG*/
+/* #define STACK_DEBUG */
 
 #ifdef STACK_DEBUG
   printf("*esp is %p\nstack contents:\n", *esp);
@@ -661,9 +652,9 @@ static void
 init_stack (void **esp, const char **args, int argc)
 {
   char *cesp;
-  int32_t *pesp;
+  uint32_t *pesp;
   int i;
-  int32_t args_address[32];
+  uint32_t args_address[32];
 
   cesp = *esp;
   /* put arguments on stack */
@@ -673,13 +664,13 @@ init_stack (void **esp, const char **args, int argc)
     
     cesp -= len;
     memcpy (cesp, args[i], len);
-    args_address[i] = (int32_t)cesp;
+    args_address[i] = (uint32_t)cesp;
   }
 
   /* word align */
-  cesp = cesp - ((int32_t)cesp % 4);
+  cesp = cesp - ((uint32_t)cesp % 4);
 
-  pesp = (int32_t *)cesp;
+  pesp = (uint32_t *)cesp;
   pesp--;
   /* Null terminate */
   *pesp = 0;
@@ -688,7 +679,7 @@ init_stack (void **esp, const char **args, int argc)
     *pesp = args_address[i];
 
   /* argv */
-  *pesp = (int32_t)pesp + 1;
+  *pesp = (uint32_t)(pesp + 1);
   pesp--;
   
   /* argc */

@@ -1,10 +1,12 @@
 #include "userprog/syscall.h"
 #include "userprog/process.h"
+#include "userprog/pagedir.h"
 #include <stdio.h>
 #include <syscall-nr.h>
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "threads/init.h"
+#include "threads/vaddr.h"
 #include "lib/kernel/stdio.h"
 #include "filesys/filesys.h"
 #include "filesys/file.h"
@@ -15,6 +17,41 @@
 static void syscall_handler (struct intr_frame *);
 
 #define FILE_ID_OFFSET 2
+
+#define CHECK_POINTER(P)                                        \
+  do {                                                          \
+    if ((uint32_t)(P) >= (uint32_t)PHYS_BASE || !pagedir_get_page (thread_current ()->pagedir, (P))) \
+    {                                                           \
+      thread_exit (-1);                                         \
+      return;                                                   \
+    }                                                           \
+  } while (0)
+
+static bool
+check_string (char *str)
+{
+  if (str == NULL)
+    return false;
+
+  while (*str != '\0')
+  {
+    str++;
+    if ((uint32_t)str >= (uint32_t)PHYS_BASE)
+      return false;
+  }
+
+  return true;
+}
+
+#define CHECK_STRING(S)                           \
+  do {                                            \
+    if (!check_string (S))                        \
+    {                                             \
+      thread_exit (-1);                           \
+      return;                                     \
+    }                                             \
+  } while (0)
+
 
 void
 syscall_init (void) 
@@ -32,16 +69,16 @@ static void
 syscall_exit (struct intr_frame *f)
 {
   int32_t *esp;
+
   int exit_code;
   
   esp = f->esp;
   esp++;
+  CHECK_POINTER (esp);
+  
+  exit_code = (int)*esp;
 
-  exit_code = (int)f->esp;
-
-  process_set_exit_code (exit_code);
-
-  thread_exit ();
+  thread_exit (exit_code);
 }
 
 static void
@@ -53,8 +90,11 @@ syscall_exec (struct intr_frame *f)
 
   esp = f->esp;
   esp++;
+  CHECK_POINTER (esp);
 
   cmd_line = (char *)*esp;
+  CHECK_POINTER (cmd_line);
+  CHECK_STRING (cmd_line);
 
   tid = process_execute (cmd_line);
   if (tid == TID_ERROR)
@@ -71,8 +111,9 @@ syscall_wait (struct intr_frame *f)
 
   esp = f->esp;
   esp++;
+  CHECK_POINTER (esp);
 
-  tid = (tid_t)f->esp;
+  tid = (tid_t)*esp;
 
   f->eax = process_wait (tid);
 }
@@ -87,10 +128,16 @@ syscall_read (struct intr_frame *f)
 
   esp = f->esp;
   esp++;
+  CHECK_POINTER (esp + 2);
 
   fd = (int)*esp++;
+
   buf = (void *)*esp++;
-  size = (unsigned)*esp++;
+  size = (unsigned)*esp;
+
+  /* Check so that buf lies in userspace */
+  CHECK_POINTER (buf);
+  CHECK_POINTER (buf + size);
 
   if (fd == STDIN_FILENO)
     {
@@ -129,10 +176,16 @@ syscall_write (struct intr_frame *f)
 
   esp = f->esp;
   esp++;
+  CHECK_POINTER (esp + 2);
 
   fd = (int)*esp++;
+
   buf = (void *)*esp++;
-  size = (unsigned)*esp++;
+  size = (unsigned)*esp;
+
+  /* Check so that buf lies in userspace */
+  CHECK_POINTER (buf);
+  CHECK_POINTER (buf + size);
   
   if (fd == STDOUT_FILENO)
     {
@@ -165,9 +218,12 @@ syscall_create (struct intr_frame *f)
 
   esp = f->esp;
   esp++;
+  CHECK_POINTER (esp + 1);
 
   name = (char *)*esp++;
-  size = (unsigned)*esp++;
+  CHECK_POINTER (name);
+  CHECK_STRING (name);
+  size = (unsigned)*esp;
 
   f->eax = filesys_create (name, size);
 }
@@ -184,8 +240,11 @@ syscall_open (struct intr_frame *f)
 
   esp = f->esp;
   esp++;
+  CHECK_POINTER (esp);
 
-  name = (char *)*esp++;
+  name = (char *)*esp;
+  CHECK_POINTER (name);
+  CHECK_STRING (name);
 
   id = bitmap_scan_and_flip (cur->files_bitmap, 0, 1, 0);
   if (id == BITMAP_ERROR)
@@ -215,6 +274,7 @@ syscall_close (struct intr_frame *f)
 
   esp = f->esp;
   esp++;
+  CHECK_POINTER (esp);
   
   fd = (int)*esp;
 
@@ -225,8 +285,8 @@ syscall_close (struct intr_frame *f)
 
       if (bitmap_test (cur->files_bitmap, id))
 	{
-	  file_close (cur->files[id]);
 	  bitmap_reset (cur->files_bitmap, id);
+	  file_close (cur->files[id]);
 	}
     }
 }
@@ -238,7 +298,8 @@ syscall_handler (struct intr_frame *f)
   int syscall_nr;
 
   esp = f->esp;
-  syscall_nr = *esp++;
+  CHECK_POINTER (esp);
+  syscall_nr = *esp;
 
   switch (syscall_nr)
   {
@@ -271,6 +332,6 @@ syscall_handler (struct intr_frame *f)
       break;
     default:
       printf ("Syscall nr: %d is not implemented!", syscall_nr);
-      thread_exit ();
+      thread_exit (-1);
     }
 }
