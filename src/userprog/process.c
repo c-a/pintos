@@ -59,6 +59,9 @@ child_status_new (tid_t tid)
   return cs;
 }
 
+/*
+ * Decreases the reference count by 1 and frees the structure if it goes down to zero.
+ */
 static void
 child_status_unref (struct child_status *cs)
 {
@@ -193,6 +196,7 @@ process_wait (tid_t child_tid)
   struct child_status find_cs;
   struct hash_elem *e;
 
+  /* Create a dummy child_status for finding the child_status with tid = child_tid */
   find_cs.tid = child_tid;
   e = hash_find (&cur->children_hash, &find_cs.hash_elem);
   if (e)

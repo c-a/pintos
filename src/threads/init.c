@@ -93,6 +93,7 @@ main (void)
   tss_init ();
   gdt_init ();
 
+  /* Initialize hash here since this is not a user process */
   hash_init (&(thread_current())->children_hash, child_status_hash_func,
              child_status_less_func, NULL);
   thread_current()->hash_initialized = true;

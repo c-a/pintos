@@ -18,6 +18,10 @@ static void syscall_handler (struct intr_frame *);
 
 #define FILE_ID_OFFSET 2
 
+/*
+ * Macro to check if a pointer lies user space.
+ * Exits the thread and returns otherwise.
+ */
 #define CHECK_POINTER(P)                                        \
   do {                                                          \
     if ((uint32_t)(P) >= (uint32_t)PHYS_BASE || !pagedir_get_page (thread_current ()->pagedir, (P))) \
@@ -43,6 +47,11 @@ check_string (char *str)
   return true;
 }
 
+/*
+ * Checks if a string is valid, eg. it's not null and
+ * it's properly null terminated (lies in user space).
+ * Exits the thread and returns otherwise.
+ */
 #define CHECK_STRING(S)                           \
   do {                                            \
     if (!check_string (S))                        \
