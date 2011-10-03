@@ -272,7 +272,7 @@ thread_tid (void)
 /* Deschedules the current thread and destroys it.  Never
    returns to the caller. */
 void
-thread_exit (int exit_code) 
+thread_exit (int exit_code UNUSED) 
 {
   ASSERT (!intr_context ());
 
