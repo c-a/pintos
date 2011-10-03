@@ -155,7 +155,11 @@ file_seek (struct file *file, off_t new_pos)
 {
   ASSERT (file != NULL);
   ASSERT (new_pos >= 0);
-  file->pos = new_pos;
+
+  if (new_pos < inode_length (file->inode))
+    file->pos = new_pos;
+  else
+    file->pos = inode_length (file->inode);
 }
 
 /* Returns the current position in FILE as a byte offset from the

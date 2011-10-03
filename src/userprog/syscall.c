@@ -219,6 +219,51 @@ syscall_write (struct intr_frame *f)
 }
 
 static void
+syscall_seek (struct intr_frame *f)
+{
+  int32_t *esp;
+  int fd;
+  unsigned position;
+
+  esp = f->esp;
+  esp++;
+  CHECK_POINTER (esp + 1);
+
+  fd = (int)*esp++;
+  position = (unsigned)*esp;
+
+  if (fd >= FILE_ID_OFFSET && fd < (FILE_ID_OFFSET + MAX_FILES))
+    {
+       if (bitmap_test (cur->files_bitmap, id))
+	  file_seek (cur->files[id], position);
+    }
+}
+
+static void
+syscall_tell (struct intr_frame *f)
+{
+  int32_t *esp;
+  int fd;
+
+  esp = f->esp;
+  esp++;
+  CHECK_POINTER (esp);
+
+  fd = (int)*esp;
+
+  if (fd >= FILE_ID_OFFSET && fd < (FILE_ID_OFFSET + MAX_FILES))
+    {
+       if (bitmap_test (cur->files_bitmap, id))
+       {
+	  f->eax = file_tell (cur->files[id]);
+          return;
+       }
+    }
+
+  f->eax = 0;
+}
+
+static void
 syscall_create (struct intr_frame *f)
 {
   int32_t *esp;
@@ -335,6 +380,12 @@ syscall_handler (struct intr_frame *f)
       break;
     case SYS_WRITE:
       syscall_write (f);
+      break;
+    case SYS_SEEK:
+      syscall_seek (f);
+      break;
+    case SYS_TELL:
+      syscall_tell (f);
       break;
     case SYS_CLOSE:
       syscall_close (f);
