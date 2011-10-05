@@ -130,6 +130,8 @@ inode_open (disk_sector_t sector)
       if (inode->sector == sector) 
         {
           inode_reopen (inode);
+          /* Release lock */
+          lock_release (&open_inodes_lock);
           return inode; 
         }
     }
@@ -145,6 +147,7 @@ inode_open (disk_sector_t sector)
   inode->open_cnt = 1;
   inode->deny_write_cnt = 0;
   inode->removed = false;
+  rwlock_init (&inode->rw);
   disk_read (filesys_disk, inode->sector, &inode->data);
 
   /* Release lock */
@@ -294,6 +297,7 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
 
   if (inode->deny_write_cnt)
     {
+      /* Release writer lock */
       rwlock_writer_unlock (&inode->rw);
       return 0;
     }

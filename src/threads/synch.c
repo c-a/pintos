@@ -342,7 +342,7 @@ rwlock_init (struct rwlock *rw)
 {
   ASSERT (rw != NULL);
 
-  lock_init (&rw->mutex);;
+  lock_init (&rw->mutex);
   sema_init (&rw->wrt, 1);
 }
 

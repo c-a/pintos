@@ -146,7 +146,7 @@ syscall_read (struct intr_frame *f)
 
   /* Check so that buf lies in userspace */
   CHECK_POINTER (buf);
-  CHECK_POINTER (buf + size);
+  CHECK_POINTER (buf + size - 1);
 
   if (fd == STDIN_FILENO)
     {
@@ -353,7 +353,7 @@ syscall_filesize (struct intr_frame *f)
   esp++;
   CHECK_POINTER (esp);
 
-  fd = *esp;
+  fd = (int)*esp;
 
   if (fd >= FILE_ID_OFFSET && fd < (FILE_ID_OFFSET + MAX_FILES))
     {
@@ -430,6 +430,7 @@ syscall_handler (struct intr_frame *f)
       break;
     case SYS_FILESIZE:
       syscall_filesize (f);
+      break;
     case SYS_READ:
       syscall_read (f);
       break;
