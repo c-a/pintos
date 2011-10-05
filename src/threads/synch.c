@@ -336,3 +336,57 @@ cond_broadcast (struct condition *cond, struct lock *lock)
   while (!list_empty (&cond->waiters))
     cond_signal (cond, lock);
 }
+
+void
+rwlock_init (struct rwlock *rw)
+{
+  ASSERT (rw != NULL);
+
+  lock_init (&rw->mutex);;
+  sema_init (&rw->wrt, 1);
+}
+
+void
+rwlock_reader_lock (struct rwlock *rw)
+{
+  ASSERT (rw != NULL);
+
+  lock_acquire (&rw->mutex);
+
+  if (++rw->readcount == 1)
+    sema_down (&rw->wrt);
+
+  lock_release (&rw->mutex);
+}
+
+void
+rwlock_reader_unlock (struct rwlock *rw)
+{
+  ASSERT (rw != NULL);
+
+  lock_acquire (&rw->mutex);
+
+  if (--rw->readcount == 0)
+    sema_up (&rw->wrt);
+
+  lock_release (&rw->mutex);
+}
+
+void
+rwlock_writer_lock (struct rwlock *rw)
+{
+  ASSERT (rw != NULL);
+
+  sema_down (&rw->wrt);
+}
+
+void
+rwlock_writer_unlock (struct rwlock *rw)
+{
+  ASSERT (rw != NULL);
+
+  sema_up (&rw->wrt);
+}
+
+  
+

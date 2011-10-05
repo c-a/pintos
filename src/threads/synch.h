@@ -41,6 +41,19 @@ void cond_wait (struct condition *, struct lock *);
 void cond_signal (struct condition *, struct lock *);
 void cond_broadcast (struct condition *, struct lock *);
 
+struct rwlock
+  {
+    struct lock mutex;
+    struct semaphore wrt;
+    int readcount;
+  };
+
+void rwlock_init (struct rwlock *);
+void rwlock_reader_lock (struct rwlock *);
+void rwlock_reader_unlock (struct rwlock *);
+void rwlock_writer_lock (struct rwlock *);
+void rwlock_writer_unlock (struct rwlock *);
+
 /* Optimization barrier.
 
    The compiler will not reorder operations across an
