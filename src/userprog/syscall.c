@@ -234,8 +234,11 @@ syscall_seek (struct intr_frame *f)
 
   if (fd >= FILE_ID_OFFSET && fd < (FILE_ID_OFFSET + MAX_FILES))
     {
-       if (bitmap_test (cur->files_bitmap, id))
-	  file_seek (cur->files[id], position);
+      struct thread *cur = thread_current ();
+      int id = fd - FILE_ID_OFFSET;
+
+      if (bitmap_test (cur->files_bitmap, id))
+        file_seek (cur->files[id], position);
     }
 }
 
@@ -253,11 +256,14 @@ syscall_tell (struct intr_frame *f)
 
   if (fd >= FILE_ID_OFFSET && fd < (FILE_ID_OFFSET + MAX_FILES))
     {
-       if (bitmap_test (cur->files_bitmap, id))
-       {
+      struct thread *cur = thread_current ();
+      int id = fd - FILE_ID_OFFSET;
+
+      if (bitmap_test (cur->files_bitmap, id))
+        {
 	  f->eax = file_tell (cur->files[id]);
           return;
-       }
+        }
     }
 
   f->eax = 0;
@@ -280,6 +286,23 @@ syscall_create (struct intr_frame *f)
   size = (unsigned)*esp;
 
   f->eax = filesys_create (name, size);
+}
+
+static void
+syscall_remove (struct intr_frame *f)
+{
+  int32_t *esp;
+  char *name;
+
+  esp = f->esp;
+  esp++;
+  CHECK_POINTER (esp);
+
+  name = (char *)*esp;
+  CHECK_POINTER (name);
+  CHECK_STRING (name);
+
+  f->eax = filesys_remove (name);
 }
 
 static void
@@ -321,6 +344,33 @@ syscall_open (struct intr_frame *f)
 }
 
 static void
+syscall_filesize (struct intr_frame *f)
+{
+  int32_t *esp;
+  int fd;
+
+  esp = f->esp;
+  esp++;
+  CHECK_POINTER (esp);
+
+  fd = *esp;
+
+  if (fd >= FILE_ID_OFFSET && fd < (FILE_ID_OFFSET + MAX_FILES))
+    {
+      struct thread *cur = thread_current ();
+      int id = fd - FILE_ID_OFFSET;
+
+      if (bitmap_test (cur->files_bitmap, id))
+        {
+          f->eax = file_length (cur->files[id]);
+          return;
+        }
+    }
+
+  f->eax = -1;
+}
+
+static void
 syscall_close (struct intr_frame *f)
 {
   int32_t *esp;
@@ -356,7 +406,7 @@ syscall_handler (struct intr_frame *f)
   syscall_nr = *esp;
 
   switch (syscall_nr)
-  {
+    {
     case SYS_HALT:
       syscall_halt ();
       break;
@@ -372,9 +422,14 @@ syscall_handler (struct intr_frame *f)
     case SYS_CREATE:
       syscall_create (f);
       break;
+    case SYS_REMOVE:
+      syscall_remove (f);
+      break;
     case SYS_OPEN:
       syscall_open (f);
       break;
+    case SYS_FILESIZE:
+      syscall_filesize (f);
     case SYS_READ:
       syscall_read (f);
       break;
