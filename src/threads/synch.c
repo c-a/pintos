@@ -344,6 +344,7 @@ rwlock_init (struct rwlock *rw)
 
   lock_init (&rw->mutex);
   sema_init (&rw->wrt, 1);
+  rw->readcount = 0;
 }
 
 void
