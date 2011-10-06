@@ -194,7 +194,7 @@ syscall_write (struct intr_frame *f)
 
   /* Check so that buf lies in userspace */
   CHECK_POINTER (buf);
-  CHECK_POINTER (buf + size);
+  CHECK_POINTER (buf + size - 1);
   
   if (fd == STDOUT_FILENO)
     {
